@@ -3,20 +3,19 @@ from tox_block.prediction import make_single_prediction
 from timeit import default_timer as timer
 from os import listdir, path
 from pathlib import Path
+import wave
 import json
-import subprocess
 
 
 def transcript(name):
+    wf = wave.open(name, "rb")
     text = ""
-    process = subprocess.Popen(['ffmpeg', '-loglevel', 'quiet', '-i',
-                                name,
-                                '-ar', '16000', '-ac', '1', '-f', 's16le', '-'],
-                               stdout=subprocess.PIPE)
-    rec = KaldiRecognizer(model, 16000)
+    if wf.getnchannels() != 1 or wf.getsampwidth() != 2 or wf.getcomptype() != "NONE":
+        return "Audio file must be WAV format mono PCM."
+    rec = KaldiRecognizer(model, wf.getframerate())
     start_time = timer()
     while True:
-        data = process.stdout.read(4000)
+        data = wf.readframes(4000)
         if len(data) == 0:
             break
         if rec.AcceptWaveform(data):
@@ -25,6 +24,7 @@ def transcript(name):
     res = json.loads(rec.FinalResult())
     text += res['text']
     end_time = timer()
+    wf.close()
     return text, end_time - start_time
 
 
@@ -35,11 +35,13 @@ def analyze(text):
     return result, end_time - start_time
 
 
-def get_length(input_video):
-    result = subprocess.run(['ffprobe', '-v', 'error', '-show_entries',
-                             'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', input_video],
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    return result.stdout
+def getlen(name):
+    f = wave.open(name, "rb")
+    frames = f.getnframes()
+    rate = f.getframerate()
+    dur = frames / float(rate)
+    f.close()
+    return dur
 
 
 if __name__ == "__main__":
@@ -48,17 +50,18 @@ if __name__ == "__main__":
         exit(1)
     SetLogLevel(-1)
     model = Model("model")
-    directory = str(Path().absolute())
+    dir = str(Path().absolute())
     folder_name = "prepared-data"
-    directory += "\\" + folder_name
-    all_files = listdir(directory)
+    dir += "\\" + folder_name
+    all_files = listdir(dir)
     for file in all_files:
-        filepath = directory + "\\" + file
-        print("File name:", file)
-        duration = get_length(filepath)
-        print("File duration:", duration, "s")
-        text_buffer, time = transcript(filepath)
-        print("Time to transcript:", time, "s")
-        text_buffer, time = analyze(text_buffer)
-        print("Time to analyze:", time, "s")
-        print("Result:", text_buffer)
+        if file[-4:] == ".wav":
+            filepath = dir + "\\" + file
+            print("File name:", file)
+            duration = getlen(filepath)
+            print("File duration:", duration, "s")
+            text_buffer, time = transcript(filepath)
+            print("Time to transcript:", time, "s")
+            text_buffer, time = analyze(text_buffer)
+            print("Time to analyze:", time, "s")
+            print("Result:", text_buffer)
